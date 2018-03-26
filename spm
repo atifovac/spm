@@ -1,0 +1,165 @@
+#! /bin/bash
+
+# import
+. $(dirname $(readlink -f "$0"))/import.spm
+
+# default values
+readonly REPO_NAME="spm-repo"			                                        # name of the spm local repository
+readonly IMPORT_NAME="import.spm"		                                        # name of the spm local repository
+readonly DEPENDENCY_NAME="dependencies.spm"	                                    # name of the spm local repository
+readonly PATH_HEADER="# Paths"			                                        # string that indicates where tu put the path variables in input.spm
+readonly IMPORT_HEADER="# Imports"		                                        # string that indicates where tu put the imports in input.spm
+SCRIPT_DIR="$(pwd)"     				                                        # directory path with 'import.spm' file
+LOCAL_REPO="$SCRIPT_DIR/$REPO_NAME"		                                        # directory path to the local repository parent directory
+GLOBAL_REPO="$HOME/.spm/$REPO_NAME"                                             # directory path to the global repository parent directory
+REMOTE_REPO="https://github.com/atifovac/[script-name]/archive/master.zip"      # url to the remote repository
+INSTALL_MODE=false				                                                # flag for "single dependency install mode"
+
+# functions
+setLocalRepo() {
+  tmp_target=$1
+  if [ -d ${tmp_target} ]; then
+    SCRIPT_DIR="$tmp_target"
+    LOCAL_REPO="$SCRIPT_DIR/$REPO_NAME"
+    log_deb "SET SCRIPT_DIR=$SCRIPT_DIR"
+  else
+    log_err "Target directory $tmp_target is not an existent directory"
+    exitWithCode 1
+  fi
+}
+
+exitWithCode() {
+  code=$1
+
+  if [ ${code} -eq 0 ]; then
+    log_inf "SPM End"
+  else
+    log_war "SPM End with Error"
+  fi
+  exit ${code}
+}
+
+setEnv() {
+  repo_path="${SCRIPT_DIR}/${REPO_NAME}"
+  if [ ! -e  ${repo_path} ]; then
+    mkdir -p ${repo_path}
+    log_deb "Directory ${repo_path} created"
+  elif [ ! -d ${repo_path} ]; then
+    log_err "${repo_path} exists but is not a directory"
+    exitWithCode 1
+  elif [ ! -w ${repo_path} ]; then
+    log_err "Cannot write in ${repo_path} directory"
+    exitWithCode 1
+  fi
+
+  import_path="${SCRIPT_DIR}/${IMPORT_NAME}"
+  if [ ! -e ${import_path} -o "$(cat ${import_path})" = "" ]; then
+    echo "#! /bin/bash" > ${import_path}
+    echo "# auto-generated import file" >> ${import_path}
+    log_deb "${import_path} file created"
+  elif [ ! -r ${import_path} -o ! -w ${import_path} ]; then
+    log_err "You don't have the right permissions on ${import_path}"
+    exitWithCode 1
+  fi
+
+  dependency_path="${SCRIPT_DIR}/${DEPENDENCY_NAME}"
+  if [ ! -e ${dependency_path} -a ${INSTALL_MODE} = false ]; then
+    log_war "No scripts to install"
+    exitWithCode 0
+  fi
+}
+
+importFromFile() {
+  for scr in $(cat ${SCRIPT_DIR}/${DEPENDENCY_NAME}); do
+    importScript ${scr}
+  done
+}
+
+importScriptFromRepo() {
+    local script=$2
+    local repo=$1
+    local script_ref=$(echo ${script} | tr "-" "_" | tr '[:lower:]' '[:upper:]')
+
+    log_deb "searching in repo $repo"
+
+    if [ -d ${repo}/${script} ]; then
+        local script_path=${repo}/${script}
+        log_deb "found script ${script_path}"
+
+        # cerco l'eventuale variabile che indica il path della dipedenza nel file di import
+        grep_res=$(grep "$script_ref" ${SCRIPT_DIR}/${IMPORT_NAME})
+        log_tra "found '${grep_res}' in ${SCRIPT_DIR}/${IMPORT_NAME}"
+
+        # se non ho trovato niente vuol dire che la dipendenza c'è nel repo ma non l'abbiamo importata
+        if [ "${grep_res}" = "" ]; then
+            log_inf "$script_ref not found in ${SCRIPT_DIR}/${IMPORT_NAME}"
+            echo "$script_ref=\"$script_path\"" >> ${SCRIPT_DIR}/${IMPORT_NAME}
+            log_inf "$script_ref=\"$script_path\""
+            echo ". \$$script_ref" >> ${SCRIPT_DIR}/${IMPORT_NAME}
+            log_inf ". \$$script_ref"
+            # se invece ho trovato qualcosa vuol dire che la dipendenza l'ho già installata
+        else
+            log_inf "script $script alredy imported"
+        fi
+
+    fi
+}
+
+importScript() {
+  # prende il nome dello script come primo parametro in input
+  script=$1
+  log_inf "Importing $script dependency"
+
+  # trasforma il nome dello script in quello che dovrebbe essere il nome della variabile di riferimento nel file import.spm
+  script_ref=$(echo ${script} | tr "-" "_" | tr '[:lower:]' '[:upper:]')
+  log_tra "script_ref = $script_ref"
+
+  # se nel repository locale esiste una directory che si chiama come lo script
+  if [ -d ${LOCAL_REPO}/${script} ]; then
+    importScriptFromRepo ${LOCAL_REPO} ${script}
+
+  # se non ho trovato nessuna directory vuol dire che o è nel repository globale o la dobbiamo scaricare
+  elif [ -d ${GLOBAL_REPO}/${script} ]; then
+    importScriptFromRepo ${GLOBAL_REPO} ${script}
+
+  else
+    log_war "repo download not implemented yet"
+
+  fi
+}
+
+# main
+log_inf "SPM Start"
+
+# script's arguments
+# -t -> target directory (should have a 'dependency.spm' file)
+# -g -> update global 'import.spm' file
+# -n -> name of the script to be imported
+while getopts ":t:gn:v" opt; do
+  case ${opt} in
+    t)
+      setLocalRepo $OPTARG
+      ;;
+    g)
+      SCRIPT_DIR="$HOME"
+      log_inf "SET GLOBAL REPO $SCRIPT_DIR"
+      ;;
+    n)
+      INSTALL_MODE=true
+      SCRIPT_TBI=$OPTARG
+      ;;
+    v)
+      set_min_level 0
+      ;;
+  esac
+done
+
+setEnv
+
+if [ ${INSTALL_MODE} = false ]; then
+  importFromFile
+elif [ -z ${SCRIPT_TBI} ]; then
+  importScript ${SCRIPT_TBI}
+fi
+
+exitWithCode 0

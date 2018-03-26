@@ -1,0 +1,3 @@
+[submodule "spm-repo/sh-logger"]
+	path = spm-repo/sh-logger
+	url = https://github.com/atifovac/sh-logger.git
